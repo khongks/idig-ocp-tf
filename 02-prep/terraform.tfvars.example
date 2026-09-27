@@ -1,0 +1,31 @@
+##############################################################################
+# 02-prep – terraform.tfvars.example
+#
+# Creates the registry pull secret (apic-registry-secret), the IBM
+# entitlement key secret (ibm-entitlement-key), and the optional
+# WatsonX credentials secret in the IDIG namespace.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#   tofu init && tofu apply
+#
+# Sensitive values – supply via env vars instead of storing on disk:
+#   export TF_VAR_docker_password="..."
+#   export TF_VAR_ibm_entitlement_key="..."
+#   export TF_VAR_watsonx_api_key="..."
+##############################################################################
+
+# Kubernetes namespace where the secrets will be created.
+namespace = "idig-system"
+
+# Target container registry (must match 00-load-images and later steps).
+docker_registry = "myregistry.example.com/idig"
+docker_user     = "myuser"
+docker_password = "changeme"   # use TF_VAR_docker_password in CI/CD
+
+# IBM Entitlement Key – https://myibm.ibm.com/products-services/containerlibrary
+ibm_entitlement_key = "eyJhbGci..."   # use TF_VAR_ibm_entitlement_key in CI/CD
+
+# Optional WatsonX / GenAI service credentials.
+# Leave both empty ("") to skip creating the watsonx-credentials secret.
+watsonx_api_key    = ""   # use TF_VAR_watsonx_api_key in CI/CD
+watsonx_project_id = ""

@@ -1,0 +1,22 @@
+##############################################################################
+# 01-prereqs – terraform.tfvars.example
+#
+# Creates the IDIG namespace, configures the default StorageClass,
+# installs cert-manager via OLM, and sets up the ingress-ca ClusterIssuer.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#   tofu init && tofu apply
+##############################################################################
+
+# Absolute path to the OCP kubeconfig YAML file.
+kubeconfig_path = "/path/to/kubeconfig.yaml"
+
+# Kubernetes namespace to create for IDIG.
+namespace = "idig-system"
+
+# StorageClass to annotate as the cluster default.
+# Leave empty ("") to skip – use this when your cluster already has a default.
+storage_class_name = ""
+
+# Shared storage volume size for the Analytics component.
+analytics_volume_size = "200Gi"

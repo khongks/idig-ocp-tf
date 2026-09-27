@@ -1,0 +1,60 @@
+##############################################################################
+# 04-idig-cluster – terraform.tfvars.example
+#
+# Deploys the IDIGCluster custom resource.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#   tofu init && tofu apply
+#
+# Sensitive values – supply via env vars instead of storing on disk:
+#   export TF_VAR_watsonx_api_key="..."
+##############################################################################
+
+# Absolute path to the OCP kubeconfig YAML file.
+kubeconfig_path = "/path/to/kubeconfig.yaml"
+
+# Kubernetes namespace where the IDIG cluster CR will be created.
+namespace = "idig-system"
+
+# Full apps subdomain of the OCP cluster (e.g. apps.mycluster.example.com).
+endpoint_domain = "apps.mycluster.example.com"
+
+# Target container registry (must match 00-load-images and 02-prep).
+docker_registry = "myregistry.example.com/idig"
+
+# Local path to the extracted IDIG product release files directory.
+release_files_path = "/path/to/idig-12.1.1-release-files"
+
+# Deployment profile: dev (minimal resources) or prod (HA).
+idig_profile = "dev"
+
+# Tenant and group names embedded in the IDIGCluster CR.
+idig_tenant_name = "acme"
+idig_group_name  = "sandbox"
+
+# StorageClass for IDIG Analytics PVs. Leave empty ("") to use cluster default.
+storage_class_name = ""
+
+# Shared storage volume size for the Analytics component.
+analytics_volume_size = "200Gi"
+
+# Component feature toggles.
+enable_analytics  = true
+enable_dev_portal = true
+
+# IDIG product version string used in the cluster CR.
+idig_version = "12.1.1.2"
+
+# License type: nonproduction or production.
+license_use = "nonproduction"
+
+# IBM license identifier for the IDIGCluster CR.
+license_id = "L-PAZT-LQ5TZL"
+
+# Optional WatsonX API key. Leave empty ("") to omit watsonxSecret from the CR.
+watsonx_api_key = ""   # use TF_VAR_watsonx_api_key in CI/CD
+
+# Dependency sentinel – paste the value of the idig_operator_ready output from
+# step 03 here when running this step standalone after step 03 has completed.
+# Leave empty ("") when running via the root module (wired automatically).
+operators_ready = ""

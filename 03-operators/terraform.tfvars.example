@@ -1,0 +1,25 @@
+##############################################################################
+# 03-operators – terraform.tfvars.example
+#
+# Deploys the APIC, NanoGW, Valkey, and IDIG operators via OLM manifests.
+# Also generates Valkey TLS certificates and creates the valkey-secret.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#   tofu init && tofu apply
+##############################################################################
+
+# Absolute path to the OCP kubeconfig YAML file.
+kubeconfig_path = "/path/to/kubeconfig.yaml"
+
+# Kubernetes namespace where operators will be deployed.
+namespace = "idig-system"
+
+# Target container registry (must match 00-load-images and 02-prep).
+docker_registry = "myregistry.example.com/idig"
+
+# Local path to the extracted IDIG product release files directory.
+release_files_path = "/path/to/idig-12.1.1-release-files"
+
+# Path to the directory where Valkey TLS certs will be generated/read.
+# Defaults to ./certs – adjust if you placed certs elsewhere.
+valkey_certs_dir = "./certs"

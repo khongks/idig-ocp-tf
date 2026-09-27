@@ -1,0 +1,38 @@
+##############################################################################
+# 00-load-images – terraform.tfvars.example
+#
+# Loads the IDIG image archive into your target container registry.
+# Optionally copies an ifix image from a remote registry using skopeo.
+#
+# Run this step standalone (not wired into the root main.tf):
+#   cp terraform.tfvars.example terraform.tfvars
+#   tofu init && tofu apply
+#
+# Sensitive values – supply via env vars instead of storing on disk:
+#   export TF_VAR_docker_password="..."
+#   export TF_VAR_ifix_source_creds="cp:<IBM_ENTITLEMENT_KEY>"
+##############################################################################
+
+# Absolute path to the IDIG image archive (.tar or .tgz) supplied by IBM.
+image_tar_path = "/path/to/idig-12.1.1.2-images.tar.gz"
+
+# Target container registry to push the loaded images into.
+docker_registry = "myregistry.example.com/idig"
+docker_user     = "myuser"
+docker_password = "changeme"   # use TF_VAR_docker_password in CI/CD
+
+# ---------------------------------------------------------------------------
+# Optional – ifix via skopeo
+# Set install_ifix = true and fill in the three ifix_* values to copy an
+# ifix image from a remote registry directly into your target registry.
+# ---------------------------------------------------------------------------
+install_ifix = false
+
+# Full source image reference (e.g. from IBM Container Registry).
+ifix_source_image = "cp.icr.io/cp/datapower/idig:12.1.1.2-ifix1"
+
+# Full destination image reference in your target registry.
+ifix_dest_image = "myregistry.example.com/idig/idig:12.1.1.2-ifix1"
+
+# Source registry credentials in user:password format (cp:<entitlement-key> for ICr).
+ifix_source_creds = "cp:eyJhbGci..."   # use TF_VAR_ifix_source_creds in CI/CD
