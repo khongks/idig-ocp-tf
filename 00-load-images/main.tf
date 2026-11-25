@@ -1,25 +1,30 @@
 ##############################################################################
 # 00-load-images – main.tf
 #
-# Loads IDIG container images from a local archive into a target registry.
-# Optionally copies an ifix image from a remote registry using skopeo.
+# Uploads the IDIG product images to a target registry, following
+# https://www.ibm.com/docs/en/dp-interact-gateway/12.1.1?topic=openshift-obtaining-product-files
 #
 # Steps:
-#   1. Validate inputs and tool availability (docker / podman, skopeo if needed)
-#   2. Load images from the tar archive and push to the target registry
-#   3. (Optional) Copy the ifix image using skopeo
+#   1. Load the IBM image-tool archive (idig-image-tool-<version>.tar.gz) and
+#      run `<image-tool> upload <registry>`, which pushes every product image.
+#   2. (Optional, v12.1.1.2 + Analytics only) copy the LA iFix images from the
+#      ifix archive into the registry with skopeo. Not needed on v12.1.1.3+.
+#
+# Works with podman or docker (container_cli = "auto" prefers podman).
 #
 # NOTE: This module is standalone and is NOT wired into the root main.tf.
-#       Run it independently:
 #           cd 00-load-images
 #           tofu init && tofu apply
+#       Re-run the upload with the same inputs:
+#           tofu apply -replace=null_resource.upload_images
 #
 # Prerequisites on the machine running this module:
-#   • docker (or podman) – for loading and pushing the image archive
-#   • skopeo              – only when install_ifix = true
+#   • podman (machine started on macOS) or docker
+#   • skopeo v1.2.2+ – only when install_ifix = true
 ##############################################################################
 
 terraform {
+  required_version = ">= 1.6.0"
   required_providers {
     null = {
       source  = "hashicorp/null"
@@ -28,161 +33,82 @@ terraform {
   }
 }
 
+locals {
+  scripts_dir = "${abspath(path.module)}/scripts"
+  # Scratch area for temporary auth files / ifix extraction. Kept under the
+  # module (i.e. under $HOME) so it is visible inside the podman machine /
+  # Docker Desktop VM on macOS. Git-ignored; cleaned up by the scripts.
+  work_dir = "${abspath(path.module)}/.work"
+}
+
 # ---------------------------------------------------------------------------
-# Step 1 – Validate inputs and required tool availability
+# Step 1 – Load the image tool and upload all product images
 # ---------------------------------------------------------------------------
-resource "null_resource" "validate" {
+resource "null_resource" "upload_images" {
   triggers = {
     image_tar_path    = var.image_tar_path
+    image_tool_ref    = var.image_tool_ref
     docker_registry   = var.docker_registry
-    install_ifix      = tostring(var.install_ifix)
-    ifix_source_image = var.ifix_source_image
-    ifix_dest_image   = var.ifix_dest_image
+    docker_user       = var.docker_user
+    upload_extra_args = join(" ", var.upload_extra_args)
   }
 
   provisioner "local-exec" {
     interpreter = ["/bin/bash", "-c"]
-    command     = <<-EOT
-      set -euo pipefail
+    command     = "bash '${local.scripts_dir}/upload-images.sh'"
+    environment = {
+      CONTAINER_CLI_PREF = var.container_cli
+      IMAGE_TAR_PATH     = var.image_tar_path
+      IMAGE_TOOL_REF     = var.image_tool_ref
+      TOOL_PLATFORM      = var.image_tool_platform
+      REGISTRY           = var.docker_registry
+      REG_USER           = var.docker_user
+      REG_PASSWORD       = var.docker_password
+      UPLOAD_EXTRA_ARGS  = join(" ", var.upload_extra_args)
+      WORK_DIR           = local.work_dir
+    }
+  }
 
-      # --- Validate archive path ---
-      if [[ ! -f "${var.image_tar_path}" ]]; then
-        echo "ERROR: image_tar_path '${var.image_tar_path}' does not exist or is not a file."
-        exit 1
-      fi
-
-      # --- Determine container CLI (prefer podman, fall back to docker) ---
-      if command -v podman &>/dev/null; then
-        CONTAINER_CLI=podman
-      elif command -v docker &>/dev/null; then
-        CONTAINER_CLI=docker
-      else
-        echo "ERROR: Neither 'podman' nor 'docker' found on PATH. Install one before running this step."
-        exit 1
-      fi
-      echo "Using container CLI: $CONTAINER_CLI"
-
-      # --- Validate ifix inputs when enabled ---
-      if [[ "${tostring(var.install_ifix)}" == "true" ]]; then
-        if ! command -v skopeo &>/dev/null; then
-          echo "ERROR: 'skopeo' not found on PATH. Install skopeo before running this step with install_ifix=true."
-          exit 1
-        fi
-        if [[ -z "${var.ifix_source_image}" ]]; then
-          echo "ERROR: ifix_source_image must be set when install_ifix = true."
-          exit 1
-        fi
-        if [[ -z "${var.ifix_dest_image}" ]]; then
-          echo "ERROR: ifix_dest_image must be set when install_ifix = true."
-          exit 1
-        fi
-        if [[ -z "${var.ifix_source_creds}" ]]; then
-          echo "ERROR: ifix_source_creds must be set when install_ifix = true."
-          exit 1
-        fi
-        echo "skopeo found: $(skopeo --version)"
-      fi
-
-      echo "Validation passed."
-    EOT
+  lifecycle {
+    precondition {
+      condition     = var.image_tar_path != "" || var.image_tool_ref != ""
+      error_message = "Set image_tar_path (to load the image tool) or image_tool_ref (to use an already-loaded one)."
+    }
   }
 }
 
 # ---------------------------------------------------------------------------
-# Step 2 – Load image archive and push to the target registry
-#
-# The archive produced by IBM is a docker-save style .tar/.tgz that may
-# contain one or more tagged images. The script:
-#   a. Loads the archive with 'docker/podman load'
-#   b. Re-tags each loaded image to the target registry
-#   c. Pushes all re-tagged images
-# ---------------------------------------------------------------------------
-resource "null_resource" "load_images" {
-  triggers = {
-    image_tar_path  = var.image_tar_path
-    docker_registry = var.docker_registry
-    docker_user     = var.docker_user
-  }
-
-  provisioner "local-exec" {
-    interpreter = ["/bin/bash", "-c"]
-    command     = <<-EOT
-      set -euo pipefail
-
-      CONTAINER_CLI=docker
-      command -v podman &>/dev/null && CONTAINER_CLI=podman
-
-      REGISTRY="${var.docker_registry}"
-      TAR="${var.image_tar_path}"
-
-      echo "==> Logging in to $REGISTRY ..."
-      echo "${var.docker_password}" | $CONTAINER_CLI login "$REGISTRY" \
-        --username "${var.docker_user}" --password-stdin
-
-      echo "==> Loading image archive: $TAR ..."
-      LOADED=$($CONTAINER_CLI load --input "$TAR" 2>&1)
-      echo "$LOADED"
-
-      # Parse 'Loaded image: <ref>' or 'Loaded image ID: <id>' lines and push each
-      echo "$LOADED" | grep -E "^Loaded image" | while read -r line; do
-        # Extract the image reference (everything after the last colon-separated label)
-        SOURCE_REF=$(echo "$line" | sed 's/^Loaded image[^:]*: //')
-        # Derive a target tag: strip any leading hostname and replace with the target registry
-        IMAGE_BASENAME=$(echo "$SOURCE_REF" | sed 's|^[^/]*/||')
-        TARGET_REF="$REGISTRY/$IMAGE_BASENAME"
-
-        echo "  Re-tagging $SOURCE_REF -> $TARGET_REF"
-        $CONTAINER_CLI tag "$SOURCE_REF" "$TARGET_REF"
-
-        echo "  Pushing $TARGET_REF ..."
-        $CONTAINER_CLI push "$TARGET_REF"
-      done
-
-      echo "==> Image load and push complete."
-    EOT
-  }
-
-  depends_on = [null_resource.validate]
-}
-
-# ---------------------------------------------------------------------------
-# Step 3 – (Optional) Copy ifix image via skopeo
-#
-# Enabled only when var.install_ifix = true.
-# Copies the ifix directly from the IBM Container Registry (or any OCI
-# registry) into the target registry without a local daemon round-trip.
+# Step 2 – (Optional) LA iFix images via skopeo
 # ---------------------------------------------------------------------------
 resource "null_resource" "copy_ifix" {
   count = var.install_ifix ? 1 : 0
 
   triggers = {
-    ifix_source_image = var.ifix_source_image
-    ifix_dest_image   = var.ifix_dest_image
+    ifix_archive_path = var.ifix_archive_path
+    ifix_images       = jsonencode(var.ifix_images)
+    docker_registry   = var.docker_registry
   }
 
   provisioner "local-exec" {
     interpreter = ["/bin/bash", "-c"]
-    command     = <<-EOT
-      set -euo pipefail
-
-      SOURCE="${var.ifix_source_image}"
-      DEST="${var.ifix_dest_image}"
-      SRC_CREDS="${var.ifix_source_creds}"
-      DEST_CREDS="${var.docker_user}:${var.docker_password}"
-
-      echo "==> Copying ifix image using skopeo ..."
-      echo "    Source: $SOURCE"
-      echo "    Dest:   $DEST"
-
-      skopeo copy \
-        --src-creds  "$SRC_CREDS" \
-        --dest-creds "$DEST_CREDS" \
-        "docker://$SOURCE" \
-        "docker://$DEST"
-
-      echo "==> ifix image copy complete."
-    EOT
+    command     = "bash '${local.scripts_dir}/copy-ifix.sh'"
+    environment = {
+      IFIX_ARCHIVE_PATH = var.ifix_archive_path
+      IFIX_IMAGES       = join("\n", [for i in var.ifix_images : "${i.source_dir}|${i.dest}"])
+      REGISTRY          = var.docker_registry
+      REG_USER          = var.docker_user
+      REG_PASSWORD      = var.docker_password
+      DEST_TLS_VERIFY   = tostring(var.registry_tls_verify)
+      WORK_DIR          = local.work_dir
+    }
   }
 
-  depends_on = [null_resource.load_images]
+  depends_on = [null_resource.upload_images]
+
+  lifecycle {
+    precondition {
+      condition     = var.ifix_archive_path != "" && length(var.ifix_images) > 0
+      error_message = "install_ifix = true requires ifix_archive_path and ifix_images."
+    }
+  }
 }

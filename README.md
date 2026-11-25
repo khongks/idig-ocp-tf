@@ -1,8 +1,13 @@
-# IBM DataPower Interact Gateway – OpenTofu Deployment
+# IBM DataPower Interact Gateway 12.1.1.3 on OpenShift – OpenTofu
 
-Automated OpenTofu module for deploying **IBM DataPower Interact Gateway (IDIG) 12.1.1**
-on OpenShift Container Platform (OCP), following the official documentation at  
-https://www.ibm.com/docs/en/dp-interact-gateway/12.1.1?topic=openshift-deploying
+Deploys **IBM DataPower Interact Gateway (IDIG)** on OpenShift Container Platform,
+following the IBM docs (*Deploying on OpenShift*) and the release bundle `README.md`:
+https://www.ibm.com/docs/en/dp-interact-gateway/12.1.1?topic=deploying-openshift
+
+Manifests are rendered **directly from the IBM release bundle** (`release_files_path`) with the
+same placeholder substitutions as the documented `sed` commands. To move to a new fix pack, point
+`release_files_path` at the new bundle and set `idig_version`. Check the bundle README for
+upgrade-path notes first.
 
 ---
 
@@ -10,137 +15,127 @@ https://www.ibm.com/docs/en/dp-interact-gateway/12.1.1?topic=openshift-deploying
 
 | Requirement | Notes |
 |---|---|
-| OpenShift 4.14 – 4.19 | `oc` configured and pointing to target cluster |
-| Cluster-admin permissions | Required for CRDs, ClusterRoles, IngressController patch |
-| OpenTofu ≥ 1.6 | `tofu` binary on your PATH |
-| IDIG release bundle | Extracted locally; set `release_files_path` |
-| IBM Entitlement Key | From https://myibm.ibm.com/products-services/containerlibrary |
-| Target container registry | IDIG images uploaded per *Obtaining product files* docs |
-| `openssl` on PATH | Used internally by OCP tooling |
+| OpenShift 4.14 – 4.19 | `oc` logged in as cluster-admin; current kubeconfig context = target cluster |
+| Default StorageClass | Annotated `storageclass.kubernetes.io/is-default-class=true` (or set `set_default_storage_class`) |
+| Analytics | Worker nodes need `vm.max_map_count >= 262144`; handled by 01-prereqs (`configure_max_map_count`) |
+| OpenTofu ≥ 1.6 | `tofu` on PATH |
+| `oc`, `bash` | Used by the provisioners |
+| Release bundle | Extracted `idig-operator-release-files_<version>` directory |
+| Images in a registry | Uploaded with [`00-load-images`](00-load-images/) |
+| IBM Entitlement Key | https://myibm.ibm.com/products-services/containerlibrary |
+| No cluster-scoped API Connect | IDIG is not supported alongside cluster-scoped APIC operators |
 
 ---
 
-## Directory structure
+## Layout
 
 ```
 .
-├── main.tf                   # Root orchestration – calls all 7 modules in order
-├── variables.tf              # All input variables
-├── outputs.tf                # Final outputs (URL, password command)
-├── terraform.tfvars.example  # Example values – copy to terraform.tfvars
+├── 00-load-images/      # Standalone: upload images with the IBM image tool (podman/docker)
+├── main.tf              # Root: runs 01 → 07 in order
+├── variables.tf / outputs.tf / terraform.tfvars.example
 │
-├── 01-prereqs/               # Namespace, cert-manager OLM, ingress-ca issuer
-├── 02-prep/                  # Registry pull secrets + optional Watsonx secret
-├── 03-operators/             # APIC, NanoGW, Valkey, IDIG NanoGW, IDIG operators
-├── 04-idig-cluster/          # IDIG cluster Custom Resource (dev or prod profile)
-├── 05-wildcard-routes/       # Patch IngressController → WildcardsAllowed
-├── 06-verification/          # Wait for IDIG Ready phase; list pods & routes
-└── 07-access/                # Output platform URL + admin password command
+├── 01-prereqs/          # Namespace, default-SC check, vm.max_map_count, cert-manager, ingress-issuer
+├── 02-prep/             # apic-registry-secret, ibm-entitlement-key, watsonx-credentials
+├── 03-operators/        # APIC, NanoGW CRDs, Valkey, IDIG NanoGW operator, IDIG operator
+├── 04-idig-cluster/     # IDIG CRDs + DatapowerInteractGatewayCluster CR
+├── 05-wildcard-routes/  # IngressController wildcardPolicy=WildcardsAllowed (cluster-wide)
+├── 06-verification/     # Wait for phase Ready, check wildcard route
+└── 07-access/           # URLs, username and password commands
 ```
+
+Steps 01–07 are modules of the root and are not run individually. To run up to a step, use
+`tofu apply -target=module.operators`, for example.
 
 ---
 
 ## Quick start
 
 ```bash
-# 1. Copy and fill in your values
-cp terraform.tfvars.example terraform.tfvars
-$EDITOR terraform.tfvars
+# 0. Upload images (once per release)
+cd 00-load-images && cp terraform.tfvars.example terraform.tfvars   # edit
+tofu init && tofu apply && cd ..
 
-# 2. Initialise providers
+# 1. Deploy
+cp terraform.tfvars.example terraform.tfvars                         # edit
+export TF_VAR_docker_password=... TF_VAR_ibm_entitlement_key=...
 tofu init
+tofu apply            # ≈ 20–40 min on a fresh cluster
 
-# 3. Preview the plan
-tofu plan
-
-# 4. Apply
-tofu apply
-```
-
-After a successful apply (≈20–30 minutes on a fresh cluster):
-
-```bash
-# Retrieve admin password
-$(tofu output -raw idig_admin_password_command)
-
-# Open platform UI
-echo $(tofu output -raw idig_platform_url)
+# 2. Log in (user: administrator)
+tofu output idig_platform_url
+eval "$(tofu output -raw idig_admin_password_command)"
 ```
 
 ---
 
-## Module breakdown
+## What each step does
 
 ### 01-prereqs
-- Creates the IDIG Kubernetes namespace.
-- Installs **cert-manager** via OpenShift OLM (cert-manager Operator for Red Hat OpenShift, `stable-v1` channel).
-- Applies `helper_files/ingress-issuer-v1.yaml` to create the `ingress-issuer` self-signed CA.
-- Optionally annotates an existing StorageClass as the cluster default.
+- Creates the namespace.
+- Verifies `storage_class_name` exists and that a default StorageClass is set (optionally annotates it).
+- When Analytics is enabled, checks `vm.max_map_count` on every worker. If any worker is below
+  262144, it applies a `Tuned` profile (`idig-max-map-count`) through the Node Tuning Operator.
+  The change is live, with no reboot, and the step waits until every worker reports the new value.
+  The profile is left in place on destroy.
+- Installs the **cert-manager Operator for Red Hat OpenShift** via OLM (`stable-v1`, namespace
+  `cert-manager-operator`) and waits for it to be ready.
+  - If an OLM subscription for it already exists, the install is skipped and the step only waits.
+  - If the community cert-manager is installed instead, the step fails, because IBM doesn't support it on OCP.
+  - On destroy it leaves cert-manager in place.
+- Applies `helper_files/ingress-issuer-v1.yaml` **in the IDIG namespace**. This creates the
+  `ingress-issuer` Issuer and the IDIG client certificates, and waits until all are Ready.
 
 ### 02-prep
-- Creates `apic-registry-secret` for the target container registry.
-- Creates `ibm-entitlement-key` for `cp.icr.io/cp/datapower`.
-- Optionally creates `watsonx-credentials` when `watsonx_api_key` is provided.
+- `apic-registry-secret` for `docker_registry`.
+- `ibm-entitlement-key` for `cp.icr.io` (user `cp`).
+- `watsonx-credentials` only when `watsonx_api_key` is set. This also adds `spec.watsonxSecret` to the CR.
 
 ### 03-operators
-Installs the five operators **in strict dependency order**:
-
-| Order | Operator | Source files |
+| Order | Component | Release files |
 |---|---|---|
-| 1 | API Connect (APIC) | `dependencies/ibm-apiconnect-crds.yaml`, `ibm-apiconnect.yaml` |
-| 2 | NanoGateway | `dependencies/ibm-nanogw-crds.yaml`, `ibm-nanogw.yaml` |
-| 3 | Valkey | `dependencies/valkey-crds.yaml`, `valkey-operator.yaml`, `valkey_standalone_cr.yaml` |
-| 4 | IDIG NanoGateway | `ibm-idig-nanogw.yaml` |
-| 5 | IDIG | `ibm-idig-operator.yaml` |
+| 1 | API Connect operator | `dependencies/ibm-apiconnect-crds.yaml`, `dependencies/ibm-apiconnect.yaml` |
+| 2 | NanoGateway CRDs | `dependencies/ibm-nanogw-crds.yaml` |
+| 3 | Valkey | `dependencies/valkey-crds.yaml`, `valkey-operator.yaml`, `valkey-extra-config.yaml`, `valkey_standalone_cr.yaml` |
+| 4 | IDIG NanoGateway operator | `ibm-idig-nanogw.yaml` |
+| 5 | IDIG operator | `ibm-idig-operator.yaml` |
 
-TLS certificates for Valkey are generated via the OpenTofu `tls` provider.
+- Rendered copies are written to `03-operators/.rendered/` (git-ignored). The script stops if any
+  placeholder is left.
+- Valkey TLS certificates (same CN/SANs as the documented `openssl` commands) are generated by the
+  `tls` provider. The Valkey password is random instead of the docs' sample `admin`. Read it with
+  `tofu output -raw valkey_password` or from secret `valkey-secret`.
+- An empty `storage_class_name` removes `storageClassName` from the Valkey PVC, so it uses the cluster default.
+- Each step re-applies when its source file (sha256) or inputs change.
 
 ### 04-idig-cluster
-- Selects `samples/idig-cluster-dev.yaml` or `samples/idig-cluster-prod.yaml`.
-- Patches all placeholders and applies the IDIG cluster CR.
+- `oc apply --server-side -f idig-crds.yaml`
+- Builds the `DatapowerInteractGatewayCluster` CR from variables, with the same fields as
+  `samples/idig-cluster.yaml` (12.1.1.3). By default `nanoGateway.gatewayDomain` is
+  `idig.<endpoint_domain>`, as in the 12.1.1.3 sample. The CR name must be **≤ 5 characters**.
+  The rendered CR is in `04-idig-cluster/.rendered/idig-cluster.yaml`.
 
 ### 05-wildcard-routes
-- Patches `ingresscontroller/default` in `openshift-ingress-operator` namespace to set  
-  `spec.routeAdmission.wildcardPolicy: WildcardsAllowed`.  
-  ⚠️ This is a **cluster-wide** change. Consult your cluster administrator.
+- Sets `wildcardPolicy: WildcardsAllowed` on `ingresscontroller/default`. ⚠️ This changes the whole
+  cluster, so check with the cluster admin. Disable it with `enable_wildcard_routes = false`.
 
 ### 06-verification
-- Polls the IDIG CR status every 30 seconds until `phase == Ready` (timeout 20 min).
-- Prints pod status, routes, and NanoGateway wildcard route admission status.
+- Waits up to 30 min for `status.phase == Ready`. Then prints pods and routes, and checks that
+  route `<cr>-nanogw-nanogw` is Admitted. On failure it prints the CR's status conditions.
 
 ### 07-access
-- Outputs the platform UI URL and the `oc` command to retrieve the admin password.
-
----
-
-## Variables reference
-
-| Variable | Default | Description |
-|---|---|---|
-| `kubeconfig_path` | — | Path to OCP kubeconfig |
-| `namespace` | `idig-system` | Namespace for IDIG |
-| `endpoint_domain` | — | `apps.<cluster>.<domain>` |
-| `docker_registry` | — | Target image registry URL |
-| `docker_user` | — | Registry username |
-| `docker_password` | — | Registry password (sensitive) |
-| `ibm_entitlement_key` | — | IBM Entitlement Key (sensitive) |
-| `release_files_path` | — | Local path to IDIG release bundle |
-| `idig_profile` | `dev` | `dev` or `prod` |
-| `idig_tenant_name` | `acme` | Tenant name in IDIG CR |
-| `idig_group_name` | `sandbox` | Group name in IDIG CR |
-| `storage_class_name` | `""` | StorageClass (empty = cluster default) |
-| `enable_analytics` | `true` | Deploy Analytics |
-| `enable_dev_portal` | `true` | Deploy Developer Portal |
-| `license_use` | `nonproduction` | `nonproduction` or `production` |
-| `watsonx_api_key` | `""` | WatsonX API key (optional) |
-| `watsonx_project_id` | `""` | WatsonX Project ID (optional) |
+- `https://idig.<domain>` (Console) and `https://devportal.<domain>` (Developer Portal). Username `administrator`.
+- Passwords come from secrets `<cr>-idig-admin-pass` and `<cr>-devportal-admin-secret`.
 
 ---
 
 ## Notes
 
-- The `idig-cluster-dev.yaml` / `idig-cluster-prod.yaml` files are patched in-place in a
-  temp file; the originals in the release bundle are never modified.
-- Placeholder replacement exactly mirrors the `sed` commands from the IBM documentation.
-- Sensitive variables (`docker_password`, `ibm_entitlement_key`, `watsonx_api_key`) should
-  be supplied via `TF_VAR_*` environment variables or a secrets manager in CI/CD pipelines.
+- **Secrets in state:** the registry password, entitlement key, WatsonX key, Valkey password and
+  Valkey TLS key are all in the state file. Keep state local and private, or use an encrypted backend.
+- **Destroy** deletes the IDIG namespace, and everything in it, plus the cert-manager OLM
+  subscription. It does not delete the cluster-scoped objects applied with `oc`: CRDs,
+  ClusterRoles, webhook configurations, and the `datapower-nano-system` namespace. Delete the IDIG
+  CR first and follow the IBM uninstall steps.
+- **Upgrades from 12.1.1.2:** follow *Upgrading IDIG* in the 12.1.1.3 bundle `README.md`.
+  Path A/B/C depends on Analytics and whether the LA iFix was applied.

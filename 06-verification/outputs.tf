@@ -3,6 +3,6 @@
 ##############################################################################
 
 output "idig_ready" {
-  description = "Trigger value indicating the IDIG cluster reached Ready phase."
+  description = "Sentinel: the IDIG cluster reached phase Ready."
   value       = null_resource.wait_idig_ready.id
 }
