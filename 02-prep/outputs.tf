@@ -2,8 +2,8 @@
 # 02-prep – outputs
 ##############################################################################
 
-output "apic_registry_secret_name" {
-  description = "Name of the registry pull secret for the target registry."
+output "image_pull_secret" {
+  description = "Name of the pull secret for the target registry (replaces DEFAULT_IMAGE_PULL_SECRET)."
   value       = kubernetes_secret_v1.apic_registry_secret.metadata[0].name
 }
 
@@ -13,6 +13,6 @@ output "ibm_entitlement_secret_name" {
 }
 
 output "watsonx_secret_name" {
-  description = "Name of the Watsonx credentials secret (empty string if not created)."
-  value       = var.watsonx_api_key != "" ? kubernetes_secret_v1.watsonx_credentials[0].metadata[0].name : ""
+  description = "Name of the WatsonX credentials secret (empty string if not created)."
+  value       = local.watsonx_enabled ? kubernetes_secret_v1.watsonx_credentials[0].metadata[0].name : ""
 }

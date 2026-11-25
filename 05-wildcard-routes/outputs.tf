@@ -3,6 +3,6 @@
 ##############################################################################
 
 output "wildcard_policy_applied" {
-  description = "Trigger value indicating the WildcardsAllowed policy was patched."
-  value       = null_resource.patch_ingress_controller.id
+  description = "Sentinel: WildcardsAllowed was ensured (empty when skipped)."
+  value       = var.enable_wildcard_routes ? null_resource.wildcard_policy[0].id : ""
 }

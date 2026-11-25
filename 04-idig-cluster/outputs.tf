@@ -3,11 +3,11 @@
 ##############################################################################
 
 output "idig_cr_name" {
-  description = "Name of the deployed IDIG cluster custom resource."
-  value       = "idig"
+  description = "Name of the IDIG cluster custom resource."
+  value       = var.idig_cr_name
 }
 
 output "idig_cluster_applied" {
-  description = "Trigger value indicating the IDIG cluster CR was applied."
-  value       = null_resource.deploy_idig_cluster.id
+  description = "Sentinel: the IDIG cluster CR was applied."
+  value       = null_resource.idig_cluster.id
 }

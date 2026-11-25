@@ -8,7 +8,7 @@ variable "namespace" {
 }
 
 variable "docker_registry" {
-  description = "Target container registry URL."
+  description = "Target registry path (host[/namespace]) holding the IDIG images."
   type        = string
 }
 
@@ -30,14 +30,14 @@ variable "ibm_entitlement_key" {
 }
 
 variable "watsonx_api_key" {
-  description = "Optional WatsonX API key. Leave empty to skip secret creation."
+  description = "Optional WatsonX API key. Leave empty to skip the GenAI service."
   type        = string
   default     = ""
   sensitive   = true
 }
 
 variable "watsonx_project_id" {
-  description = "Optional WatsonX Project ID. Leave empty to skip secret creation."
+  description = "WatsonX Project ID. Required when watsonx_api_key is set."
   type        = string
   default     = ""
 }

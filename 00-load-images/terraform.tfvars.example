@@ -1,8 +1,8 @@
 ##############################################################################
 # 00-load-images – terraform.tfvars.example
 #
-# Loads the IDIG image archive into your target container registry.
-# Optionally copies an ifix image from a remote registry using skopeo.
+# Uploads the IDIG product images to your target registry using the IBM
+# image tool (podman or docker).
 #
 # Run this step standalone (not wired into the root main.tf):
 #   cp terraform.tfvars.example terraform.tfvars
@@ -10,29 +10,37 @@
 #
 # Sensitive values – supply via env vars instead of storing on disk:
 #   export TF_VAR_docker_password="..."
-#   export TF_VAR_ifix_source_creds="cp:<IBM_ENTITLEMENT_KEY>"
 ##############################################################################
 
-# Absolute path to the IDIG image archive (.tar or .tgz) supplied by IBM.
-image_tar_path = "/path/to/idig-12.1.1.2-images.tar.gz"
+# "auto" (podman if installed, else docker), "podman" or "docker".
+container_cli = "auto"
 
-# Target container registry to push the loaded images into.
+# idig-image-tool-<version>.tar.gz, found in the extracted
+# idig-operator-release-files_<version>.zip.
+image_tar_path = "/path/to/release-files/idig-image-tool-12.1.1.3.tar.gz"
+
+# Optional: skip `load` and use an image-tool image that is already loaded.
+# image_tool_ref = "idig-image-tool-12.1.1:latest"
+
+# Target registry path (host[/namespace]) – no https:// prefix.
 docker_registry = "myregistry.example.com/idig"
 docker_user     = "myuser"
-docker_password = "changeme"   # use TF_VAR_docker_password in CI/CD
+docker_password = "changeme"   # prefer TF_VAR_docker_password
 
 # ---------------------------------------------------------------------------
-# Optional – ifix via skopeo
-# Set install_ifix = true and fill in the three ifix_* values to copy an
-# ifix image from a remote registry directly into your target registry.
+# Optional – LA iFix. ONLY for v12.1.1.2 with Analytics enabled.
+# Skip entirely on v12.1.1.3 or later.
 # ---------------------------------------------------------------------------
 install_ifix = false
 
-# Full source image reference (e.g. from IBM Container Registry).
-ifix_source_image = "cp.icr.io/cp/datapower/idig:12.1.1.2-ifix1"
-
-# Full destination image reference in your target registry.
-ifix_dest_image = "myregistry.example.com/idig/idig:12.1.1.2-ifix1"
-
-# Source registry credentials in user:password format (cp:<entitlement-key> for ICr).
-ifix_source_creds = "cp:eyJhbGci..."   # use TF_VAR_ifix_source_creds in CI/CD
+# ifix_archive_path = "/path/to/interact-gateway-v12.1.1.2-ifix1.AM-3536.tar.gz"
+# ifix_images = [
+#   {
+#     source_dir = "laifix-images/idig-operator/op.1.0.1.g.53aec8c.b.v12112ifix1am3536.n.21"
+#     dest       = "idig-operator:op.1.0.1.g.53aec8c.b.v12112ifix1am3536.n.21"
+#   },
+#   {
+#     source_dir = "laifix-images/analytics-v2-proxy/2026-08-25-06-54-13-v12.1.1-248a78c10e1581287ceb23d9e89f81bbc5bd055b"
+#     dest       = "analytics-v2-proxy:2026-08-25-06-54-13-v12.1.1-248a78c10e1581287ceb23d9e89f81bbc5bd055b"
+#   },
+# ]

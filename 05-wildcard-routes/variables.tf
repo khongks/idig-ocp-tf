@@ -7,7 +7,8 @@ variable "kubeconfig_path" {
   type        = string
 }
 
-variable "idig_cluster_applied" {
-  description = "Trigger value from module.idig_cluster (idig_cluster_applied output) — forces re-run when the cluster CR changes."
-  type        = string
+variable "enable_wildcard_routes" {
+  description = "Patch the default IngressController to WildcardsAllowed (cluster-wide)."
+  type        = bool
+  default     = true
 }
