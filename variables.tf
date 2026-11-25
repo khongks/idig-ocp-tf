@@ -182,10 +182,18 @@ variable "watsonx_api_key" {
   type        = string
   default     = ""
   sensitive   = true
+  validation {
+    condition     = !can(regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", var.watsonx_api_key))
+    error_message = "watsonx_api_key looks like a UUID (a project ID). Check it is not swapped with watsonx_project_id."
+  }
 }
 
 variable "watsonx_project_id" {
-  description = "WatsonX Project ID (required with watsonx_api_key)."
+  description = "WatsonX Project ID, a UUID (required with watsonx_api_key)."
   type        = string
   default     = ""
+  validation {
+    condition     = var.watsonx_project_id == "" || can(regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", var.watsonx_project_id))
+    error_message = "watsonx_project_id must be a UUID (e.g. daf57ed0-…). Check it is not swapped with watsonx_api_key."
+  }
 }

@@ -38,6 +38,15 @@ resource "kubernetes_namespace_v1" "idig" {
       "app.kubernetes.io/part-of"    = "idig"
     }
   }
+
+  # OpenShift adds SCC annotations (openshift.io/sa.scc.uid-range, …) and
+  # operators add labels after creation; never strip them.
+  lifecycle {
+    ignore_changes = [
+      metadata[0].annotations,
+      metadata[0].labels,
+    ]
+  }
 }
 
 # ---------------------------------------------------------------------------
